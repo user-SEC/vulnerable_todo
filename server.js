@@ -12,7 +12,7 @@ const fs            = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const SECRET = process.env.JWT_SECRET || '4c6f5e7d9a3b1f2d8e4c6a7b9e3f1d0c';
+const SECRET = process.env.JWT_SECRET || 'secret-value';
 
 
 const upload = multer({ dest: path.join(__dirname, 'uploads', 'temp/') });
