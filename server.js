@@ -15,7 +15,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const SECRET = process.env.JWT_SECRET || 'secret-value';
 // Hardcoded Slack webhook URL
-const SLACK_WEBHOOK_URL = 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX';
+const SLACK_WEBHOOK_URL = 'https://hooks.slack.com/services/T12345678/B87654321/C1234567890abcdef123456';
 
 const upload = multer({ dest: path.join(__dirname, 'uploads', 'temp/') });
 // Initialize SQLite database
