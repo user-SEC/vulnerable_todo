@@ -45,7 +45,8 @@ db.prepare(
 app.use(cors());
 app.use(bodyParser.json());
 
-// Middleware: verify JWT\ nfunction authenticate(req, res, next) {
+// Middleware: verify JWT\ n
+function authenticate(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader) return res.status(401).json({ error: 'Brak tokena' });
   const token = authHeader.split(' ')[1];
@@ -204,16 +205,7 @@ app.get('/api/search', authenticate, (req, res) => {
   }
 });
 
-app.get('/download', authenticate, (req, res) => {
-  const requestedFile = req.query.file;
-  const filePath = path.join(__dirname, 'files', requestedFile);
-  res.sendFile(filePath, err => {
-    if (err) {
-      console.error('Download error:', err);
-      return res.status(404).json({ error: 'Plik nie znaleziony' });
-    }
-  });
-});
+
 
 app.put('/api/todos/:id', authenticate, (req, res) => {
   const id = Number(req.params.id);
