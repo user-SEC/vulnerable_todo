@@ -1,4 +1,4 @@
-// server.js - Express + SQLite + JWT Authentication
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -7,43 +7,45 @@ const Database = require('better-sqlite3');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { execFile } = require('child_process');
-const multer        = require('multer');
-const fs            = require('fs');
+const multer = require('multer');
+const fs = require('fs');
+const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const SECRET = process.env.JWT_SECRET || 'secret-value';
-
+// Hardcoded Slack webhook URL
+const SLACK_WEBHOOK_URL = 'https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX';
 
 const upload = multer({ dest: path.join(__dirname, 'uploads', 'temp/') });
 // Initialize SQLite database
 const db = new Database(path.join(__dirname, 'todos.db'));
 // Create tables if not exist
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS users (
+
+db.prepare(
+  `CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL UNIQUE,
     password TEXT NOT NULL,
     createdAt TEXT NOT NULL
-  );
-`).run();
+  );`
+).run();
 
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS todos (
+db.prepare(
+  `CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     userId INTEGER NOT NULL,
     text TEXT NOT NULL,
     completed INTEGER NOT NULL DEFAULT 0,
     createdAt TEXT NOT NULL,
     FOREIGN KEY(userId) REFERENCES users(id)
-  );
-`).run();
+  );`
+).run();
 
 app.use(cors());
 app.use(bodyParser.json());
 
-// Middleware: verify JWT
-function authenticate(req, res, next) {
+// Middleware: verify JWT\ nfunction authenticate(req, res, next) {
   const authHeader = req.headers['authorization'];
   if (!authHeader) return res.status(401).json({ error: 'Brak tokena' });
   const token = authHeader.split(' ')[1];
@@ -119,7 +121,43 @@ app.post('/api/todos', authenticate, (req, res) => {
   res.status(201).json({ ...todo, completed: Boolean(todo.completed) });
 });
 
+// Slack notification endpoint
+app.post('/api/notify', authenticate, (req, res) => {
+  const { text } = req.body;
+  if (!text || !text.trim()) {
+    return res.status(400).json({ error: 'Treść powiadomienia jest wymagana' });
+  }
+  const payload = JSON.stringify({ text });
+  const url = new URL(SLACK_WEBHOOK_URL);
+  const options = {
+    hostname: url.hostname,
+    path: url.pathname + url.search,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(payload)
+    }
+  };
+  const request = https.request(options, (response) => {
+    let data = '';
+    response.on('data', chunk => data += chunk);
+    response.on('end', () => {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        res.json({ success: true });
+      } else {
+        res.status(500).json({ error: 'Nie udało się wysłać powiadomienia', details: data });
+      }
+    });
+  });
+  request.on('error', (err) => {
+    console.error('Slack notification error:', err);
+    res.status(500).json({ error: 'Nie udało się wysłać powiadomienia', details: err.message });
+  });
+  request.write(payload);
+  request.end();
+});
 
+// Existing image resize endpoint
 app.post(
   '/api/resize-png',
   authenticate,
@@ -129,25 +167,19 @@ app.post(
       return res.status(400).json({ error: 'Brak pliku PNG' });
     }
 
-    const tempPath  = req.file.path;
-    const outName   = `out-${Date.now()}.png`;
-    const outPath   = path.join(__dirname, 'uploads', outName);
+    const tempPath = req.file.path;
+    const outName = `out-${Date.now()}.png`;
+    const outPath = path.join(__dirname, 'uploads', outName);
 
-    // Uruchamiamy ImageMagick CLI (podatne na CVE-2022-44268)
-    // Vulnerable versions: 7.1.0-48 i 7.1.0-49
     execFile(
-      'magick', // lub 'convert' w zależności od instalacji
-      [ tempPath, '-resize', '200x200', outPath ],
+      'magick',
+      [tempPath, '-resize', '200x200', outPath],
       (err, stdout, stderr) => {
-        // usuń plik tymczasowy
         fs.unlinkSync(tempPath);
-
         if (err) {
           console.error('ImageMagick error:', stderr);
           return res.status(500).json({ error: 'Błąd przetwarzania obrazu' });
         }
-
-        // Zwracamy plik wynikowy; atakujący może z niego odczytać plik wskazany
         res.sendFile(outPath, err2 => {
           if (err2) console.error('SendFile error:', err2);
         });
@@ -159,17 +191,12 @@ app.post(
 // WARNING: VULNERABLE to SQL INJECTION, do NOT use in production!
 app.get('/api/search', authenticate, (req, res) => {
   const { q } = req.query;
-
-  // TU zaczyna się niebezpieczne miejsce:
-  // bezpośrednio interpolujemy kawałek zapytania z user input
   const unsafeQuery = `
-    SELECT * FROM todos 
-    WHERE userId = ${req.user.id} 
+    SELECT * FROM todos
+    WHERE userId = ${req.user.id}
       AND text LIKE '%${q}%'
   `;
-
   try {
-    // Wykonanie „nieczystego” zapytania
     const rows = db.prepare(unsafeQuery).all();
     res.json(rows.map(r => ({ ...r, completed: Boolean(r.completed) })));
   } catch (err) {
@@ -177,17 +204,12 @@ app.get('/api/search', authenticate, (req, res) => {
   }
 });
 
-
 app.get('/download', authenticate, (req, res) => {
-  // Klient musi znać dokładny URL i parametr file, nie jest on nigdzie linkowany w UI
-  const requestedFile = req.query.file;  
-  // Brak jakiejkolwiek walidacji/sanitizacji → CWE-22
+  const requestedFile = req.query.file;
   const filePath = path.join(__dirname, 'files', requestedFile);
-
   res.sendFile(filePath, err => {
     if (err) {
       console.error('Download error:', err);
-      // Nie ujawniamy szczegółów błędu, ale zwracamy 404
       return res.status(404).json({ error: 'Plik nie znaleziony' });
     }
   });
@@ -203,20 +225,9 @@ app.put('/api/todos/:id', authenticate, (req, res) => {
   res.json({ ...row, completed: Boolean(row.completed) });
 });
 
-app.delete('/api/todos/:id', authenticate, (req, res) => {
-  const id = Number(req.params.id);
-  const stmt = db.prepare('DELETE FROM todos WHERE id = ? AND userId = ?');
-  const info = stmt.run(id, req.user.id);
-  if (info.changes === 0) return res.status(404).json({ error: 'Zadanie nie znalezione' });
-  res.json({ message: 'Usunięto' });
-});
-
 // Serve frontend in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, 'client/build')));
   app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'client/build', 'index.html'));
-  });
+    res.sendFile(path.join(__dirname, 'client/build', 'index.html'));">
 }
-
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
