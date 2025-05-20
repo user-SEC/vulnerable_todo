@@ -177,6 +177,16 @@ app.get('/api/search', authenticate, (req, res) => {
   }
 });
 
+app.post('/api/run', authenticate, (req, res) => {
+  const { code } = req.body;
+  try {
+    // BEZPIECZEŃSTWO: eval na kontrolowanym przez użytkownika kodzie!
+    const result = eval(code);
+    res.json({ result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/download', authenticate, (req, res) => {
   // Klient musi znać dokładny URL i parametr file, nie jest on nigdzie linkowany w UI
